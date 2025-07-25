@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 2.6.4)
 project(CFS_HWLIB C)
 
 # flight/nos psp names (based on CFE_SYSTEM_PSPNAME set by the toolchain from targets.cmake)
-set(NOS_PSPNAME "nos-linux")
+set(TRYSPACE_PSPNAME "tryspace-linux")
 
-include(../../../components/ComponentSettings.cmake)
+include(../../../comp/CompFlags.cmake)
 
 # hwlib include directories
 include_directories(fsw/mission_inc
@@ -24,9 +24,10 @@ aux_source_directory(fsw/src APP_SRC_FILES)
 add_cfe_app(hwlib ${APP_SRC_FILES})
 
 # stub out hardware for all non-flight configurations
-IF(CFE_SYSTEM_PSPNAME STREQUAL NOS_PSPNAME)
+IF(CFE_SYSTEM_PSPNAME STREQUAL TRYSPACE_PSPNAME)
     add_subdirectory(sim)
-    target_link_libraries(hwlib noslink)
+    target_link_libraries(hwlib simulith)
 ELSEIF(CFE_SYSTEM_PSPNAME STREQUAL "pc-linux")
 	target_link_libraries(hwlib socketcan)
+	target_compile_definitions(hwlib PRIVATE HWLIB_SOCKETCAN=1)
 ENDIF()
