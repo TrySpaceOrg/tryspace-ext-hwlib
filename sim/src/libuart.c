@@ -10,7 +10,7 @@
 
 static void make_simulith_uart_address(char* out, size_t outlen, int idx) 
 {
-    snprintf(out, outlen, "tcp://tryspace-comp-demo-sim:%d", SIMULITH_UART_BASE_PORT + idx);
+    snprintf(out, outlen, "tcp://tryspace-director:%d", SIMULITH_UART_BASE_PORT + idx);
     OS_printf("HWLIB: make_simulith_uart_address: %s\n", out);
 }
 
