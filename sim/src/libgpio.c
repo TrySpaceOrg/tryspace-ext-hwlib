@@ -28,7 +28,7 @@ ivv-itc@lists.nasa.gov
 static transport_port_t* simulith_gpio_devices[HWLIB_GPIO_MAX_DEVICES] = {0};
 
 // Helper function to get or create simulith transport_port_t for gpio_info_t
-static transport_port_t* get_simulith_device(gpio_info_t* device)
+static transport_port_t* get_simulith_gpio_device(gpio_info_t* device)
 {
     if (!device) return NULL;
     int idx = device->pin;
@@ -49,7 +49,7 @@ int32_t gpio_init(gpio_info_t* device)
     if (!device) return GPIO_ERROR;
     if (device->pin > 255) return GPIO_ERROR; // Pin limit check
     
-    transport_port_t* port = get_simulith_device(device);
+    transport_port_t* port = get_simulith_gpio_device(device);
     if (!port) return GPIO_ERROR;
     int result = simulith_transport_init(port);
     if (result == SIMULITH_TRANSPORT_SUCCESS) {
@@ -63,7 +63,7 @@ int32_t gpio_read(gpio_info_t* device, uint8_t* value)
 {
     if (!device || !value || device->isOpen != GPIO_OPEN) return GPIO_ERROR;
     
-    transport_port_t* port = get_simulith_device(device);
+    transport_port_t* port = get_simulith_gpio_device(device);
     if (!port) return GPIO_ERROR;
     // Send read request: [cmd=0, pin]
     uint8_t req[2] = {0, (uint8_t)device->pin};
@@ -95,7 +95,7 @@ int32_t gpio_write(gpio_info_t* device, uint8_t value)
     if (!device || device->isOpen != GPIO_OPEN) return GPIO_ERROR;
     if (value > 1) return GPIO_ERROR; // Value validation
     
-    transport_port_t* port = get_simulith_device(device);
+    transport_port_t* port = get_simulith_gpio_device(device);
     if (!port) return GPIO_ERROR;
     // Send write request: [cmd=1, pin, value]
     uint8_t req[3] = {1, (uint8_t)device->pin, (uint8_t)(value & 0x1)};
@@ -108,7 +108,7 @@ int32_t gpio_close(gpio_info_t* device)
 {
     if (!device) return GPIO_ERROR;
     
-    transport_port_t* port = get_simulith_device(device);
+    transport_port_t* port = get_simulith_gpio_device(device);
     if (!port) return GPIO_ERROR;
     int rc = simulith_transport_close(port);
     if (rc == SIMULITH_TRANSPORT_SUCCESS) {

@@ -75,7 +75,7 @@ int32_t spi_write(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
     if (!port) return SPI_ERROR;
     int result = simulith_transport_send(port, data, numBytes);
     if (result < 0) return SPI_ERROR;
-    return SPI_SUCCESS;
+    return result;
 }
 
 int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
@@ -99,7 +99,7 @@ int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
         usleep(poll_delay_us);
     }
     if (!got_resp) return SPI_ERROR;
-    return SPI_SUCCESS;
+    return result;
 }
 
 int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer, uint32_t length, uint16_t delay, uint8_t bits, uint8_t deselect)
@@ -108,18 +108,23 @@ int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer,
     
     transport_port_t* port = get_simulith_device(device);
     if (!port) return SPI_ERROR;
+
     int32_t status = -1;
     int sent = simulith_transport_send(port, txBuff, length);
-    if (sent == (int)length) {
+    if (sent == (int)length) 
+    {
         int poll_attempts = 20;
         int poll_delay_us = 2000;
         int got_resp = 0;
         int r = -1;
-        for (int i = 0; i < poll_attempts; ++i) {
+        for (int i = 0; i < poll_attempts; ++i) 
+        {
             int available = simulith_transport_available(port);
-            if (available > 0) {
+            if (available > 0) 
+            {
                 r = simulith_transport_receive(port, rxBuffer, length);
-                if (r == (int)length) {
+                if (r == (int)length) 
+                {
                     got_resp = 1;
                     break;
                 }
