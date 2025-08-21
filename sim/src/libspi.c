@@ -15,74 +15,44 @@ NASA IV&V
 ivv-itc@lists.nasa.gov
 */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <string.h>
-
-/* hwlib API */
+#include "simulith.h"
 #include "libspi.h"
 
-/* simulith API */
-#include "simulith_spi.h"
+// Storage for transport_port_t devices mapped to spi_info_t devices
+#define HWLIB_SPI_MAX_DEVICES (MAX_SPI_BUSES * 8)
+static transport_port_t* simulith_spi_devices[HWLIB_SPI_MAX_DEVICES] = {0};
 
-// Storage for SPI device structures mapped to spi_info_t devices
-static spi_device_t spi_devices[MAX_SPI_BUSES * 8]; // Max 8 CS per bus
-static int device_count = 0;
-
-// Helper function to get or create simulith device for spi_info_t
-static spi_device_t* get_simulith_device(spi_info_t* device)
+// Helper function to get or create simulith transport_port_t for spi_info_t
+static transport_port_t* get_simulith_device(spi_info_t* device)
 {
     if (!device) return NULL;
-    
-    // Search for existing device
-    for (int i = 0; i < device_count; i++) {
-        if (spi_devices[i].bus_id == device->bus && spi_devices[i].cs_id == device->cs) {
-            return &spi_devices[i];
-        }
+    int idx = device->bus * 8 + device->cs;
+    if (idx < 0 || idx >= HWLIB_SPI_MAX_DEVICES) return NULL;
+    if (!simulith_spi_devices[idx]) {
+        transport_port_t* port = (transport_port_t*)calloc(1, sizeof(transport_port_t));
+        if (!port) return NULL;
+        snprintf(port->name, sizeof(port->name), "SPI%d_CS%d", device->bus, device->cs);
+        snprintf(port->address, sizeof(port->address), "ipc:///tmp/simulith_pub:%d", SIMULITH_SPI_BASE_PORT + (device->bus * 8) + device->cs);
+        port->is_server = 0;
+        simulith_spi_devices[idx] = port;
     }
-    
-    // Create new device if not found
-    if (device_count >= (MAX_SPI_BUSES * 8)) {
-        return NULL; // Too many devices
-    }
-    
-    spi_device_t* sim_device = &spi_devices[device_count++];
-    sim_device->bus_id = device->bus;
-    sim_device->cs_id = device->cs;
-    sim_device->init = 0;
-    
-    // Create unique name and address based on bus and CS
-    snprintf(sim_device->name, sizeof(sim_device->name), "spi%d_cs%d", device->bus, device->cs);
-    snprintf(sim_device->address, sizeof(sim_device->address), "tcp://localhost:%d", 
-             SIMULITH_SPI_BASE_PORT + (device->bus * 8) + device->cs);
-    
-    // Default to client mode (can be overridden by environment or configuration)
-    sim_device->is_server = 0;
-    
-    return sim_device;
+    return simulith_spi_devices[idx];
 }
 
 int32_t spi_init_dev(spi_info_t* device)
 {
     if (!device) return SPI_ERROR;
     
-    spi_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) {
-        return SPI_ERROR;
-    }
-    
-    int result = simulith_spi_init(sim_device);
-    if (result == SIMULITH_SPI_SUCCESS) {
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_init(port);
+    if (result == SIMULITH_TRANSPORT_SUCCESS) {
         device->isOpen = SPI_DEVICE_OPEN;
         return SPI_SUCCESS;
     }
-    
     return SPI_ERROR;
 }
 
-/* nos spi chip select */
 int32_t spi_select_chip(spi_info_t* device)
 {
     // In simulith, chip select is implicit in addressing, so this is a no-op
@@ -90,7 +60,6 @@ int32_t spi_select_chip(spi_info_t* device)
     return SPI_SUCCESS;
 }
 
-/* nos spi chip unselect */
 int32_t spi_unselect_chip(spi_info_t* device)
 {
     // In simulith, chip select is implicit in addressing, so this is a no-op
@@ -98,31 +67,38 @@ int32_t spi_unselect_chip(spi_info_t* device)
     return SPI_SUCCESS;
 }
 
-/* nos spi write */
 int32_t spi_write(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
 {
     if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
     
-    spi_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return SPI_ERROR;
-    
-    int result = simulith_spi_write(sim_device, data, numBytes);
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_send(port, data, numBytes);
     if (result < 0) return SPI_ERROR;
-    
     return SPI_SUCCESS;
 }
 
-/* nos spi read */
 int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
 {
     if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
-    
-    spi_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return SPI_ERROR;
-    
-    int result = simulith_spi_read(sim_device, data, numBytes);
-    if (result < 0) return SPI_ERROR;
-    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int poll_attempts = 20;
+    int poll_delay_us = 2000;
+    int got_resp = 0;
+    int result = -1;
+    for (int i = 0; i < poll_attempts; ++i) {
+        int available = simulith_transport_available(port);
+        if (available > 0) {
+            result = simulith_transport_receive(port, data, numBytes);
+            if (result == (int)numBytes) {
+                got_resp = 1;
+                break;
+            }
+        }
+        usleep(poll_delay_us);
+    }
+    if (!got_resp) return SPI_ERROR;
     return SPI_SUCCESS;
 }
 
@@ -130,12 +106,29 @@ int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer,
 {
     if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
     
-    spi_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return SPI_ERROR;
-    
-    int result = simulith_spi_transaction(sim_device, txBuff, length, rxBuffer, length);
-    if (result != SIMULITH_SPI_SUCCESS) return SPI_ERROR;
-    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int32_t status = -1;
+    int sent = simulith_transport_send(port, txBuff, length);
+    if (sent == (int)length) {
+        int poll_attempts = 20;
+        int poll_delay_us = 2000;
+        int got_resp = 0;
+        int r = -1;
+        for (int i = 0; i < poll_attempts; ++i) {
+            int available = simulith_transport_available(port);
+            if (available > 0) {
+                r = simulith_transport_receive(port, rxBuffer, length);
+                if (r == (int)length) {
+                    got_resp = 1;
+                    break;
+                }
+            }
+            usleep(poll_delay_us);
+        }
+        if (got_resp) status = SIMULITH_TRANSPORT_SUCCESS;
+    }
+    if (status != SIMULITH_TRANSPORT_SUCCESS) return SPI_ERROR;
     return SPI_SUCCESS;
 }
 
@@ -143,14 +136,12 @@ int32_t spi_close_device(spi_info_t* device)
 {
     if (!device) return SPI_ERROR;
     
-    spi_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return SPI_ERROR;
-    
-    int result = simulith_spi_close(sim_device);
-    if (result == SIMULITH_SPI_SUCCESS) {
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_close(port);
+    if (result == SIMULITH_TRANSPORT_SUCCESS) {
         device->isOpen = SPI_DEVICE_CLOSED;
         return SPI_SUCCESS;
     }
-    
     return SPI_ERROR;
 }

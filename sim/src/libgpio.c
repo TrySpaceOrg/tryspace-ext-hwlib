@@ -20,47 +20,28 @@ ivv-itc@lists.nasa.gov
 #include <stdio.h>
 #include <string.h>
 
-/* hwlib API */
+#include "simulith.h"
 #include "libgpio.h"
 
-/* simulith API */
-#include "simulith_gpio.h"
+// Storage for transport_port_t devices mapped to gpio_info_t devices
+#define HWLIB_GPIO_MAX_DEVICES 256
+static transport_port_t* simulith_gpio_devices[HWLIB_GPIO_MAX_DEVICES] = {0};
 
-// Storage for GPIO device structures mapped to gpio_info_t devices  
-static gpio_device_t gpio_devices[256]; // Support up to 256 pins
-static int device_count = 0;
-
-// Helper function to get or create simulith device for gpio_info_t
-static gpio_device_t* get_simulith_device(gpio_info_t* device)
+// Helper function to get or create simulith transport_port_t for gpio_info_t
+static transport_port_t* get_simulith_device(gpio_info_t* device)
 {
     if (!device) return NULL;
-    
-    // Search for existing device
-    for (int i = 0; i < device_count; i++) {
-        if (gpio_devices[i].pin == device->pin) {
-            return &gpio_devices[i];
-        }
+    int idx = device->pin;
+    if (idx < 0 || idx >= HWLIB_GPIO_MAX_DEVICES) return NULL;
+    if (!simulith_gpio_devices[idx]) {
+        transport_port_t* port = (transport_port_t*)calloc(1, sizeof(transport_port_t));
+        if (!port) return NULL;
+        snprintf(port->name, sizeof(port->name), "GPIO%d", device->pin);
+        snprintf(port->address, sizeof(port->address), "ipc:///tmp/simulith_pub:%d", SIMULITH_GPIO_BASE_PORT + device->pin);
+        port->is_server = 0;
+        simulith_gpio_devices[idx] = port;
     }
-    
-    // Create new device if not found
-    if (device_count >= 256) {
-        return NULL; // Too many devices
-    }
-    
-    gpio_device_t* sim_device = &gpio_devices[device_count++];
-    sim_device->pin = device->pin;
-    sim_device->direction = device->direction;
-    sim_device->init = 0;
-    
-    // Create unique name and address based on pin
-    snprintf(sim_device->name, sizeof(sim_device->name), "gpio%d", device->pin);
-    snprintf(sim_device->address, sizeof(sim_device->address), "tcp://localhost:%d", 
-             SIMULITH_GPIO_BASE_PORT + device->pin);
-    
-    // Default to client mode (can be overridden by environment or configuration)
-    sim_device->is_server = 0;
-    
-    return sim_device;
+    return simulith_gpio_devices[idx];
 }
 
 int32_t gpio_init(gpio_info_t* device) 
@@ -68,17 +49,13 @@ int32_t gpio_init(gpio_info_t* device)
     if (!device) return GPIO_ERROR;
     if (device->pin > 255) return GPIO_ERROR; // Pin limit check
     
-    gpio_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) {
-        return GPIO_ERROR;
-    }
-    
-    int result = simulith_gpio_init(sim_device);
-    if (result == SIMULITH_GPIO_SUCCESS) {
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return GPIO_ERROR;
+    int result = simulith_transport_init(port);
+    if (result == SIMULITH_TRANSPORT_SUCCESS) {
         device->isOpen = GPIO_OPEN;
         return GPIO_SUCCESS;
     }
-    
     return GPIO_ERROR;
 }
 
@@ -86,14 +63,30 @@ int32_t gpio_read(gpio_info_t* device, uint8_t* value)
 {
     if (!device || !value || device->isOpen != GPIO_OPEN) return GPIO_ERROR;
     
-    gpio_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return GPIO_ERROR;
-    
-    int result = simulith_gpio_read(sim_device, value);
-    if (result == SIMULITH_GPIO_SUCCESS) {
-        return GPIO_SUCCESS;
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return GPIO_ERROR;
+    // Send read request: [cmd=0, pin]
+    uint8_t req[2] = {0, (uint8_t)device->pin};
+    int rc = simulith_transport_send(port, req, sizeof(req));
+    if (rc != 2) return GPIO_ERROR;
+    // Poll for response: [cmd=0, pin, value]
+    uint8_t resp[3];
+    int poll_attempts = 20;
+    int poll_delay_us = 2000;
+    int got_resp = 0;
+    for (int i = 0; i < poll_attempts; ++i) {
+        int available = simulith_transport_available(port);
+        if (available > 0) {
+            rc = simulith_transport_receive(port, resp, sizeof(resp));
+            if (rc == 3 && resp[0] == 0 && resp[1] == (uint8_t)device->pin) {
+                *value = resp[2];
+                got_resp = 1;
+                break;
+            }
+        }
+        usleep(poll_delay_us);
     }
-    
+    if (got_resp) return GPIO_SUCCESS;
     return GPIO_ERROR;
 }
 
@@ -102,14 +95,12 @@ int32_t gpio_write(gpio_info_t* device, uint8_t value)
     if (!device || device->isOpen != GPIO_OPEN) return GPIO_ERROR;
     if (value > 1) return GPIO_ERROR; // Value validation
     
-    gpio_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return GPIO_ERROR;
-    
-    int result = simulith_gpio_write(sim_device, value);
-    if (result == SIMULITH_GPIO_SUCCESS) {
-        return GPIO_SUCCESS;
-    }
-    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return GPIO_ERROR;
+    // Send write request: [cmd=1, pin, value]
+    uint8_t req[3] = {1, (uint8_t)device->pin, (uint8_t)(value & 0x1)};
+    int rc = simulith_transport_send(port, req, sizeof(req));
+    if (rc == 3) return GPIO_SUCCESS;
     return GPIO_ERROR;
 }
 
@@ -117,14 +108,12 @@ int32_t gpio_close(gpio_info_t* device)
 {
     if (!device) return GPIO_ERROR;
     
-    gpio_device_t* sim_device = get_simulith_device(device);
-    if (!sim_device) return GPIO_ERROR;
-    
-    int result = simulith_gpio_close(sim_device);
-    if (result == SIMULITH_GPIO_SUCCESS) {
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return GPIO_ERROR;
+    int rc = simulith_transport_close(port);
+    if (rc == SIMULITH_TRANSPORT_SUCCESS) {
         device->isOpen = GPIO_CLOSED;
         return GPIO_SUCCESS;
     }
-    
     return GPIO_ERROR;
 }

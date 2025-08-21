@@ -22,7 +22,7 @@ aux_source_directory(fsw/src APP_SRC_FILES)
 # stub out hardware for all non-flight configurations
 IF(OSAL_SYSTEM_BSPTYPE STREQUAL "tryspace-linux")
     # Include Simulith headers and sim source files directly
-    set(SIMULITH_BUILD_DIR "${CMAKE_SOURCE_DIR}/../simulith/build")
+    set(SIMULITH_BUILD_DIR "${CMAKE_SOURCE_DIR}/../../simulith/build")
 
     # Add include directories for sim headers
     list(APPEND HWLIB_SIM_INCLUDE_DIRS
