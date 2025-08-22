@@ -124,13 +124,6 @@ int32_t i2c_master_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbu
             int available = simulith_transport_available((transport_port_t*)i2c_dev);
             if (available > 0) {
                 r = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
-                OS_printf("HWLIB: i2c_master_transaction: recv returned %d (expected %u)\n", r, rxlen);
-                if (r > 0) {
-                    int dump_r = (r < 64) ? r : 64;
-                    OS_printf("HWLIB: i2c_master_transaction: RX first %d bytes:", dump_r);
-                    for (int j = 0; j < dump_r; ++j) OS_printf(" %02X", ((uint8_t*)rxbuf)[j]);
-                    OS_printf("\n");
-                }
                 break;
             }
             usleep(poll_delay_us);
@@ -172,13 +165,6 @@ int32_t i2c_read_transaction(i2c_bus_info_t* device, uint8_t addr, void * rxbuf,
         int available = simulith_transport_available((transport_port_t*)i2c_dev);
         if (available > 0) {
             status = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
-            OS_printf("HWLIB: i2c_read_transaction: receive returned %d (requested %u)\n", status, rxlen);
-            if (status > 0) {
-                int dump = (status < 64) ? status : 64;
-                OS_printf("HWLIB: i2c_read_transaction: RX first %d bytes:", dump);
-                for (int j = 0; j < dump; ++j) OS_printf(" %02X", ((uint8_t*)rxbuf)[j]);
-                OS_printf("\n");
-            }
             break;
         }
         usleep(poll_delay_us);
@@ -208,13 +194,6 @@ int32_t i2c_write_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbuf
 
     transport_port_t *i2c_dev = simulith_i2c_devices[idx];
     int32_t status = simulith_transport_send((transport_port_t*)i2c_dev, (const uint8_t*)txbuf, txlen);
-    OS_printf("HWLIB: i2c_write_transaction: send returned %d (expected %u)\n", status, txlen);
-    if (status > 0) {
-        int dump = (status < 64) ? status : 64;
-        OS_printf("HWLIB: i2c_write_transaction: TX first %d bytes:", dump);
-        for (int i = 0; i < dump; ++i) OS_printf(" %02X", ((uint8_t*)txbuf)[i]);
-        OS_printf("\n");
-    }
     if(status < 0)
     {
         OS_printf("HWLIB: simulith_i2c_write failed with status %d\n", status);
