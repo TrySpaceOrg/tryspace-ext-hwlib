@@ -25,14 +25,14 @@ ivv-itc@lists.nasa.gov
 /************************************************************************
 ** Includes
 *************************************************************************/
-#include "libcan.h"
-#include "libi2c.h"
-#include "libmem.h"
-#include "libtrq.h"
-#include "libspi.h"
+//#include "libcan.h"
+//#include "libi2c.h"
+//#include "libmem.h"
+//#include "libtrq.h"
+//#include "libspi.h"
 #include "libuart.h"
-#include "libgpio.h"
-#include "libsocket.h"
+//#include "libgpio.h"
+//#include "libsocket.h"
 
 /************************************************************************
 ** Outside of cFS build
