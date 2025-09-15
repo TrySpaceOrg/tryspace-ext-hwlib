@@ -135,7 +135,7 @@ int32_t uart_bytes_available(uart_info_t* device)
     {
         OS_printf("HWLIB: simulith_uart_available failed with status %d\n", status);
     }
-    return simulith_uart_ports[idx]->rx_buf_len; // Return the length of the RX buffer
+    return (int32_t)simulith_uart_ports[idx]->rx_buf_len; // Return the length of the RX buffer
 }
 
 int32_t uart_close_port(uart_info_t* device) 

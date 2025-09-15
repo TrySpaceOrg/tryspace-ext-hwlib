@@ -83,8 +83,8 @@ int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
     if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
     transport_port_t* port = get_simulith_device(device);
     if (!port) return SPI_ERROR;
-    int poll_attempts = 20;
-    int poll_delay_us = 2000;
+    int poll_attempts = 100; /* previously 20 */
+    int poll_delay_us = 2000; /* 2ms between polls */
     int got_resp = 0;
     int result = -1;
     for (int i = 0; i < poll_attempts; ++i) {
@@ -96,7 +96,7 @@ int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
                 break;
             }
         }
-        usleep(poll_delay_us);
+    usleep((useconds_t)poll_delay_us);
     }
     if (!got_resp) return SPI_ERROR;
     return result;
@@ -113,8 +113,9 @@ int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer,
     int sent = simulith_transport_send(port, txBuff, length);
     if (sent == (int)length) 
     {
-        int poll_attempts = 20;
-        int poll_delay_us = 2000;
+    /* Increase polling window slightly to tolerate simulator scheduling jitter */
+    int poll_attempts = 100; /* previously 20 */
+    int poll_delay_us = 2000; /* 2ms between polls */
         int got_resp = 0;
         int r = -1;
         for (int i = 0; i < poll_attempts; ++i) 
@@ -129,7 +130,7 @@ int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer,
                     break;
                 }
             }
-            usleep(poll_delay_us);
+            usleep((useconds_t)poll_delay_us);
         }
         if (got_resp) status = SIMULITH_TRANSPORT_SUCCESS;
     }

@@ -50,7 +50,7 @@ ivv-itc@lists.nasa.gov
 /* cFE requires that a library have an initialization routine      */ 
 /*                                                                 */
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-int32 hwlib_Init(void)
+int hwlib_Init(void)
 {
     /*
     ** Register the events

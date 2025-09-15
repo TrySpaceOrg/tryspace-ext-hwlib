@@ -67,4 +67,7 @@ ivv-itc@lists.nasa.gov
     #endif
 #endif
 
+/* Prototypes */
+int hwlib_Init(void);
+
 #endif /* _hwlib_h_ */

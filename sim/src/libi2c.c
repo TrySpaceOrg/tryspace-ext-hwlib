@@ -126,7 +126,7 @@ int32_t i2c_master_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbu
                 r = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
                 break;
             }
-            usleep(poll_delay_us);
+            usleep((useconds_t)poll_delay_us);
         }
         if (r == (int)rxlen) status = SIMULITH_TRANSPORT_SUCCESS;
         else {
@@ -167,7 +167,7 @@ int32_t i2c_read_transaction(i2c_bus_info_t* device, uint8_t addr, void * rxbuf,
             status = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
             break;
         }
-        usleep(poll_delay_us);
+    usleep((useconds_t)poll_delay_us);
     }
     if (status <= 0) {
         OS_printf("HWLIB: i2c_read_transaction: no response after %d polls\n", poll_attempts);
