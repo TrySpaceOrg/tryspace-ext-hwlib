@@ -31,7 +31,7 @@ static transport_port_t* simulith_gpio_devices[HWLIB_GPIO_MAX_DEVICES] = {0};
 static transport_port_t* get_simulith_gpio_device(gpio_info_t* device)
 {
     if (!device) return NULL;
-    int idx = device->pin;
+    int idx = (int)device->pin;
     if (idx < 0 || idx >= HWLIB_GPIO_MAX_DEVICES) return NULL;
     if (!simulith_gpio_devices[idx]) {
         transport_port_t* port = (transport_port_t*)calloc(1, sizeof(transport_port_t));
@@ -72,7 +72,6 @@ int32_t gpio_read(gpio_info_t* device, uint8_t* value)
     // Poll for response: [cmd=0, pin, value]
     uint8_t resp[3];
     int poll_attempts = 20;
-    int poll_delay_us = 2000;
     int got_resp = 0;
     for (int i = 0; i < poll_attempts; ++i) {
         int available = simulith_transport_available(port);
@@ -84,7 +83,7 @@ int32_t gpio_read(gpio_info_t* device, uint8_t* value)
                 break;
             }
         }
-        usleep(poll_delay_us);
+        OS_TaskDelay(2);
     }
     if (got_resp) return GPIO_SUCCESS;
     return GPIO_ERROR;
