@@ -118,7 +118,6 @@ int32_t i2c_master_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbu
     if (sent == (int)txlen) {
         /* poll for response up to 20 times with short delay */
         int poll_attempts = 20;
-        int poll_delay_us = 2000; // 2ms per poll, total up to ~40ms
         int r = 0;
         for (int i = 0; i < poll_attempts; ++i) {
             int available = simulith_transport_available((transport_port_t*)i2c_dev);
@@ -126,7 +125,7 @@ int32_t i2c_master_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbu
                 r = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
                 break;
             }
-            usleep((useconds_t)poll_delay_us);
+            OS_TaskDelay(2);
         }
         if (r == (int)rxlen) status = SIMULITH_TRANSPORT_SUCCESS;
         else {
@@ -160,14 +159,13 @@ int32_t i2c_read_transaction(i2c_bus_info_t* device, uint8_t addr, void * rxbuf,
     transport_port_t *i2c_dev = simulith_i2c_devices[idx];
     int32_t status = 0;
     int poll_attempts = 20;
-    int poll_delay_us = 2000; // 2ms per poll, total up to ~40ms
     for (int i = 0; i < poll_attempts; ++i) {
         int available = simulith_transport_available((transport_port_t*)i2c_dev);
         if (available > 0) {
             status = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
             break;
         }
-    usleep((useconds_t)poll_delay_us);
+        OS_TaskDelay(2);
     }
     if (status <= 0) {
         OS_printf("HWLIB: i2c_read_transaction: no response after %d polls\n", poll_attempts);

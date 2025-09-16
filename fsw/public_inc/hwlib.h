@@ -45,7 +45,11 @@ ivv-itc@lists.nasa.gov
     #pragma GCC diagnostic ignored "-Wall"
     #pragma GCC diagnostic warning "-Wunused-value"
     #define OS_printf           printf
+
+    // Silence implicit-function-declaration for usleep here only
+    #pragma GCC diagnostic ignored "-Wimplicit-function-declaration"
     #define OS_TaskDelay(n)     ( usleep((n) * 1000) )
+
     #if defined (__GNUC__)
       #define OS_PACK         __attribute__ ((packed))
     #else
