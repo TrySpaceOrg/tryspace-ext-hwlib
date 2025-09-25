@@ -87,7 +87,7 @@ int32_t socket_create(socket_info_t* socket_info)
     if(socket_info->category==server || socket_info->type==dgram)
     {
         // Prepare the sockaddr_in structure
-        sockaddr.sin_family = address_family;
+        sockaddr.sin_family = (sa_family_t)address_family;
         if(inet_addr(socket_info->ip_address) != INADDR_NONE)
         {
             sockaddr.sin_addr.s_addr = inet_addr(socket_info->ip_address);
@@ -101,7 +101,7 @@ int32_t socket_create(socket_info_t* socket_info)
                 sockaddr.sin_addr.s_addr = inet_addr(ip);
             }
         }
-        sockaddr.sin_port = htons(socket_info->port_num);
+        sockaddr.sin_port = htons((uint16_t)socket_info->port_num);
 
         // Bind the socket 
         ret = bind(socket_info->sockfd,(struct sockaddr *)&sockaddr , sizeof(sockaddr));
@@ -186,7 +186,7 @@ int32_t socket_accept(socket_info_t* socket_info)
 {
     int c;
     int ret;
-    struct sockaddr_in client;
+    struct sockaddr_in client_addr;
     int32_t status;
 
     status = SOCKET_SUCCESS;
@@ -200,7 +200,7 @@ int32_t socket_accept(socket_info_t* socket_info)
 
     // Accept incoming connection 
     c = sizeof(struct sockaddr_in);
-    ret = accept(socket_info->sockfd, (struct sockaddr *)&client, (socklen_t*)&c);
+    ret = accept(socket_info->sockfd, (struct sockaddr *)&client_addr, (socklen_t*)&c);
 	if (ret == -1)
 	{
         // Handle non-blocking sockets
@@ -243,7 +243,7 @@ int32_t socket_connect(socket_info_t* socket_info, char* remote_ip_address, int 
 {
     int ret;
     int address_family;
-    struct sockaddr_in server;
+    struct sockaddr_in server_addr;
     int32_t status;
     int error_num;
 
@@ -272,12 +272,12 @@ int32_t socket_connect(socket_info_t* socket_info, char* remote_ip_address, int 
     }
 
     // Prepare the server structure 
-	server.sin_family = address_family;
-	server.sin_addr.s_addr = inet_addr(remote_ip_address);
-	server.sin_port = htons(remote_port_num);  
+    server_addr.sin_family = (sa_family_t)address_family;
+    server_addr.sin_addr.s_addr = inet_addr(remote_ip_address);
+    server_addr.sin_port = htons((uint16_t)remote_port_num);  
 
     // Connect to remote address/port 
-	ret = connect(socket_info->sockfd , (struct sockaddr *)&server , sizeof(server));
+    ret = connect(socket_info->sockfd , (struct sockaddr *)&server_addr , sizeof(server_addr));
 	if (ret == -1)
 	{
         error_num = errno;
@@ -303,7 +303,6 @@ int32_t socket_connect(socket_info_t* socket_info, char* remote_ip_address, int 
 
 int32_t socket_send(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, size_t* bytes_sent, char* remote_ip_address, int remote_port_num)
 {
-    int ret;
     int32_t status;
     struct sockaddr_in remote_sockaddr;
     status = SOCKET_SUCCESS;
@@ -311,7 +310,7 @@ int32_t socket_send(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
    switch(socket_info->type)
     {
         case stream:
-        {
+            {
             // Only send on stream sockets in a connected state
             if(socket_info->connected == false)
             {
@@ -320,20 +319,20 @@ int32_t socket_send(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
             }
             else
             {           
-                ret = send(socket_info->sockfd, buffer, buflen, 0);
-                if(ret == -1)
+                ssize_t sret = send(socket_info->sockfd, buffer, buflen, 0);
+                if(sret == -1)
                 {
                     status = SOCKET_SEND_ERR;     
                     return status;           
                 }
+                *bytes_sent = (size_t)sret;
             }
-            *bytes_sent = ret;
             break;
         }
         case dgram:
         {
             // Prepare the remote_sockaddr structure 
-            remote_sockaddr.sin_family = socket_info->address_family;
+            remote_sockaddr.sin_family = (sa_family_t)socket_info->address_family;
             if(inet_addr(remote_ip_address) != INADDR_NONE)
             {
                 remote_sockaddr.sin_addr.s_addr = inet_addr(remote_ip_address);
@@ -347,22 +346,21 @@ int32_t socket_send(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
                     remote_sockaddr.sin_addr.s_addr = inet_addr(ip);
                 }
             }
-            remote_sockaddr.sin_port = htons(remote_port_num);
+            remote_sockaddr.sin_port = htons((uint16_t)remote_port_num);
 
-            ret = sendto(socket_info->sockfd, (void*)buffer, buflen, 0, (struct sockaddr *)&remote_sockaddr , sizeof(remote_sockaddr));
-            if(ret == -1)
+            ssize_t sret = sendto(socket_info->sockfd, (void*)buffer, buflen, 0, (struct sockaddr *)&remote_sockaddr , sizeof(remote_sockaddr));
+            if(sret == -1)
             {
-                OS_printf("socket_send: sendto returned error %d \n", ret);
+                OS_printf("socket_send: sendto returned error %zd \n", sret);
                 status = SOCKET_SEND_ERR;     
                 return status;           
             }
-
-            if(ret != (int) buflen)
+            if((size_t)sret != buflen)
             {
-                OS_printf("socket_send: sendto sent only %d out of %ld bytes! \n", ret, buflen);
+                OS_printf("socket_send: sendto sent only %zd out of %zu bytes! \n", sret, buflen);
             }
 
-            *bytes_sent = ret;
+            *bytes_sent = (size_t)sret;
             break;
         }
         default: 
@@ -378,7 +376,6 @@ int32_t socket_send(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
 int32_t socket_recv(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, size_t* bytes_recvd)
 {
     int c;
-    int ret;
     int32_t status;
     struct sockaddr_in remote_sockaddr;
 
@@ -396,15 +393,15 @@ int32_t socket_recv(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
             }
             else
             {           
-                ret = recv(socket_info->sockfd, (void*)buffer, buflen, 0);
-                if(ret == 0)
-                {
+                    ssize_t sret = recv(socket_info->sockfd, (void*)buffer, buflen, 0);
+                    if(sret == 0)
+                    {
                     // Client disconnected
                     socket_info->connected = false;
                     status = SOCKET_RECV_ERR;
                     return status;
                 }
-                else if(ret == -1)
+                    else if(sret == -1)
                 {
                     // Handle non-blocking sockets
                     if( (socket_info->block==false) && (errno==EAGAIN) )
@@ -420,15 +417,15 @@ int32_t socket_recv(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
                     status = SOCKET_RECV_ERR;     
                     return status;           
                 }
-                *bytes_recvd = ret;
+                *bytes_recvd = (size_t)sret;
             }
             break;
         }
         case dgram:
         {
             c = sizeof(struct sockaddr_in);
-            ret = recvfrom(socket_info->sockfd, (void*)buffer, buflen, 0, (struct sockaddr *)&remote_sockaddr, (socklen_t*)&c);
-            if(ret == -1)
+            ssize_t sret = recvfrom(socket_info->sockfd, (void*)buffer, buflen, 0, (struct sockaddr *)&remote_sockaddr, (socklen_t*)&c);
+            if(sret == -1)
             {
                 // Handle non-blocking sockets
                 if( (socket_info->block==false) && (errno==EAGAIN) )
@@ -444,7 +441,7 @@ int32_t socket_recv(socket_info_t* socket_info, uint8_t* buffer, size_t buflen, 
                 status = SOCKET_RECV_ERR;     
                 return status;           
             }   
-            *bytes_recvd = ret;   
+            *bytes_recvd = (size_t)sret;   
             break;
         }
         default: 

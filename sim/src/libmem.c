@@ -17,6 +17,10 @@ extern "C" {
 
 pthread_mutex_t mutex;
 
+/* Forward prototypes to satisfy -Werror=missing-prototypes */
+void *get_shared_mem(uint32_t address, uint32_t length);
+void detach_shared_mem(uint32_t *shared_addr);
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *
  * get_shared_mem() -   Creates a shared memory segment and attaches that segment to an unused address.
@@ -32,7 +36,7 @@ void *get_shared_mem(uint32_t address, uint32_t length){
     pthread_mutex_lock(&mutex);
 
     // Creates shared memory segment or returns the identifier of the previously created segment.
-    int32_t shmid = shmget(address, length, IPC_CREAT | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+    int32_t shmid = shmget((key_t)address, length, IPC_CREAT | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
     if (shmid == -1) {
         printf("LIBMEM SHMGET ERROR %d\n", errno);
         return NULL;
@@ -73,16 +77,17 @@ void detach_shared_mem(uint32_t *shared_addr){
  * Outputs:         returns int32_t:    Length of data written on success, -1 on failure
  *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-int32_t devmem_write(uint32_t addr, uint8_t *in, int32_t length){
-	uint32_t *local_addr;
-    uint8_t byte;  
 
-	if((local_addr = (uint32_t*)get_shared_mem(addr, length)) == NULL) {
-		return -1;  
+int32_t devmem_write(uint32_t addr, uint8_t *in, int32_t length){
+    uint32_t *local_addr;
+    size_t byte;
+
+    if((local_addr = (uint32_t*)get_shared_mem(addr, (uint32_t)length)) == NULL) {
+        return -1;  
     }
 
-    for(byte = 0; byte < length; byte++) {
-        local_addr[byte] = in[byte]; 
+    for(byte = 0; byte < (size_t)length; ++byte) {
+        local_addr[byte] = (uint32_t)in[byte]; 
     }
 
     detach_shared_mem(local_addr); 
@@ -102,16 +107,17 @@ int32_t devmem_write(uint32_t addr, uint8_t *in, int32_t length){
  * Outputs:         returns int32_t:    Length of data read on success, -1 on failure  
  *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-int32_t devmem_read(uint32_t addr, uint8_t *out, int32_t length){
-	uint32_t *local_addr;
-    uint8_t byte;
 
-	if((local_addr = (uint32_t*)get_shared_mem(addr, length)) == NULL) {
-		return -1;  
+int32_t devmem_read(uint32_t addr, uint8_t *out, int32_t length){
+    uint32_t *local_addr;
+    size_t byte;
+
+    if((local_addr = (uint32_t*)get_shared_mem(addr, (uint32_t)length)) == NULL) {
+        return -1;  
     }
 
-    for(byte = 0; byte < length; byte++) {
-        out[byte] = local_addr[byte]; 
+    for(byte = 0; byte < (size_t)length; ++byte) {
+        out[byte] = (uint8_t)local_addr[byte]; 
     }
 
     detach_shared_mem(local_addr); 

@@ -15,15 +15,11 @@ NASA IV&V
 ivv-itc@lists.nasa.gov
 */
 
-#include "nos_link.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h> 
 #include <arpa/inet.h> 
 #include <netinet/in.h>
-
-/* nos */
-#include <Spi/Client/CInterface.h>
 
 /* hwlib API */
 #include "libtrq.h"
@@ -35,12 +31,12 @@ static const int PORT = 14242;
 static int sockfd = 0;
 static struct sockaddr_in servaddr;
 
-int32_t trq_update(trq_info_t* device)
+static int32_t trq_update(trq_info_t* device)
 {
     int32_t status = TRQ_SUCCESS;
     ssize_t bytes_sent;
     char message[512];
-    float percent_high_dir = 100.0 * device->timer_high_ns / device->timer_period_ns;
+    double percent_high_dir = 100.0 * (double)device->timer_high_ns / (double)device->timer_period_ns;
 
     // Take into account the direction
     if (device->positive_direction == false)
@@ -125,7 +121,7 @@ int32_t trq_init(trq_info_t* device)
         
         // Look up `trq_sim` from hostname
         char ip[16];
-        int check = HostToIp("trq_sim", ip);
+        int check = HostToIp("trq-sim", ip);
         if(check == 0)
         {
             servaddr.sin_addr.s_addr = inet_addr(ip);
@@ -146,7 +142,7 @@ int32_t trq_command(trq_info_t* device, uint8_t percent_high, bool pos_dir)
         return TRQ_ERROR;
     }
 
-    device->timer_high_ns = device->timer_period_ns * (percent_high / 100.00);
+    device->timer_high_ns = (uint32_t)((double)device->timer_period_ns * ((double)percent_high / 100.0));
     device->positive_direction = pos_dir;
     status = trq_update(device);
 

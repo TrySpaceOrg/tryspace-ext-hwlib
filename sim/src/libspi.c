@@ -1,4 +1,4 @@
-/* Copyright (C) 2009 - 2016 National Aeronautics and Space Administration. All Foreign Rights are Reserved to the U.S. Government.
+/* Copyright (C) 2009 - 2019 National Aeronautics and Space Administration. All Foreign Rights are Reserved to the U.S. Government.
 
 This software is provided "as is" without any warranty of any, kind either express, implied, or statutory, including, but not
 limited to, any warranty that the software will conform to, specifications any implied warranties of merchantability, fitness
@@ -15,208 +15,136 @@ NASA IV&V
 ivv-itc@lists.nasa.gov
 */
 
-#include "nos_link.h"
-#include <stdint.h>
-#include <stdlib.h>
-#include <pthread.h>
-
-/* nos */
-#include <Spi/Client/CInterface.h>
-
-/* hwlib API */
+#include "simulith.h"
 #include "libspi.h"
 
-/* spi bus mutex */
-pthread_mutex_t spi_bus_mutex[MAX_SPI_BUSES];
-uint32_t handle_count = 0;
+// Storage for transport_port_t devices mapped to spi_info_t devices
+#define HWLIB_SPI_MAX_DEVICES (MAX_SPI_BUSES * 8)
+static transport_port_t* simulith_spi_devices[HWLIB_SPI_MAX_DEVICES] = {0};
 
-/* spi device handles */
-static NE_SpiHandle *spi_device[NUM_SPI_DEVICES] = {0};
-
-/* public prototypes */
-void nos_init_spi_link(void);
-void nos_destroy_spi_link(void);
-
-/* private prototypes */
-static NE_SpiHandle* nos_get_spi_device(spi_info_t* device);
-
-/* initialize nos engine spi link */
-void nos_init_spi_link(void)
+// Helper function to get or create simulith transport_port_t for spi_info_t
+static transport_port_t* get_simulith_device(spi_info_t* device)
 {
-    // Init the mutexes for chip select
-    int i;
-    for(i = 0; i < MAX_SPI_BUSES; i++)
-    {
-        if (pthread_mutex_init(&spi_bus_mutex[i], NULL) != 0)
-        {
-            OS_printf("HWLIB: Create spi mutex error for spi bus %d", i);
-        }
+    if (!device) return NULL;
+    int idx = device->bus * 8 + device->cs;
+    if (idx < 0 || idx >= HWLIB_SPI_MAX_DEVICES) return NULL;
+    if (!simulith_spi_devices[idx]) {
+        transport_port_t* port = (transport_port_t*)calloc(1, sizeof(transport_port_t));
+        if (!port) return NULL;
+        snprintf(port->name, sizeof(port->name), "SPI%d_CS%d", device->bus, device->cs);
+        snprintf(port->address, sizeof(port->address), "ipc:///tmp/simulith_pub:%d", SIMULITH_SPI_BASE_PORT + (device->bus * 8) + device->cs);
+        port->is_server = 0;
+        simulith_spi_devices[idx] = port;
     }
+    return simulith_spi_devices[idx];
 }
 
-/* destroy nos engine spi link */
-void nos_destroy_spi_link(void)
-{
-    /* clean up spi buses */
-    int i;
-    for(i = 0; i < MAX_SPI_BUSES; i++)
-    {
-        NE_SpiHandle *dev = spi_device[i];
-        if(dev) NE_spi_close(&dev);
-
-        if (pthread_mutex_destroy(&spi_bus_mutex[i]) != 0)
-        {
-            OS_printf("HWLIB: Destroy spi mutex error for spi bus %d", i);
-        }
-    }
-}
-
-/* nos spi init */
 int32_t spi_init_dev(spi_info_t* device)
 {
-    int     status = SPI_SUCCESS;
-
-
-    pthread_mutex_lock(&spi_bus_mutex[device->bus]);
+    if (!device) return SPI_ERROR;
     
-    /* get spi device handle */
-    NE_SpiHandle **dev = &spi_device[device->handle];
-    if(*dev == NULL)
-    {
-        /* get nos spi connection params */
-        const nos_connection_t *con = &nos_spi_connection[(device->bus * 10) + device->cs];
-
-        /* try to initialize master */
-        *dev = NE_spi_init_master3(hub, con->uri, con->bus);
-        if(*dev)
-        {
-            status = SPI_SUCCESS;
-        }
-        else
-        {
-            pthread_mutex_unlock(&spi_bus_mutex[device->bus]);
-            OS_printf("HWLIB: Open SPI device \"%s\" error %d", device->deviceString, status);
-            return status;
-        }
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_init(port);
+    if (result == SIMULITH_TRANSPORT_SUCCESS) {
+        device->isOpen = SPI_DEVICE_OPEN;
+        return SPI_SUCCESS;
     }
-
-    pthread_mutex_unlock(&spi_bus_mutex[device->bus]);
-
-    // Set open flag
-    device->isOpen = SPI_DEVICE_OPEN;
-
-    return status;
+    return SPI_ERROR;
 }
 
-/* get spi device */
-static NE_SpiHandle* nos_get_spi_device(spi_info_t* device)
-{
-    NE_SpiHandle *dev = NULL;
-    if(device->handle < NUM_SPI_DEVICES)
-    {
-        dev = spi_device[device->handle];
-        if(dev == NULL)
-        {
-            spi_init_dev(device);
-            dev = spi_device[device->handle];
-        }
-    }
-    return dev;
-}
-
-/* nos spi chip select */
 int32_t spi_select_chip(spi_info_t* device)
 {
-    int32_t status = SPI_SUCCESS;
-
-    pthread_mutex_lock(&spi_bus_mutex[device->bus]);
-
-    NE_SpiHandle *dev = nos_get_spi_device(device);
-    if(dev)
-    {
-        NE_spi_select_chip(dev, device->cs);
-    }
-
-    return status;
+    // In simulith, chip select is implicit in addressing, so this is a no-op
+    if (!device) return SPI_ERROR;
+    return SPI_SUCCESS;
 }
 
-/* nos spi chip unselect */
 int32_t spi_unselect_chip(spi_info_t* device)
 {
-    int32_t status = SPI_SUCCESS;
-
-    pthread_mutex_unlock(&spi_bus_mutex[device->bus]);
-
-    NE_SpiHandle *dev = nos_get_spi_device(device);
-    if(dev)
-    {
-        NE_spi_unselect_chip(dev);
-    }
-
-    return status;
+    // In simulith, chip select is implicit in addressing, so this is a no-op
+    if (!device) return SPI_ERROR;
+    return SPI_SUCCESS;
 }
 
-/* nos spi write */
 int32_t spi_write(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
 {
-    int status = SPI_SUCCESS;
-
-    NE_SpiHandle *dev = nos_get_spi_device(device);
-    if(dev)
-    {
-        if(NE_spi_write(dev, data, numBytes) != NE_SPI_SUCCESS)
-        {
-            status = SPI_ERROR;
-        }
-    }
-
-    return status;
+    if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
+    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_send(port, data, numBytes);
+    if (result < 0) return SPI_ERROR;
+    return result;
 }
 
-/* nos spi read */
 int32_t spi_read(spi_info_t* device, uint8_t data[], const uint32_t numBytes)
 {
-    int status = SPI_SUCCESS;
-
-    NE_SpiHandle *dev = nos_get_spi_device(device);
-    if(dev)
-    {
-        if(NE_spi_read(dev, data, numBytes) != NE_SPI_SUCCESS)
-        {
-            status = SPI_ERROR;
+    if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int poll_attempts = 100; /* previously 20 */
+    int got_resp = 0;
+    int result = -1;
+    for (int i = 0; i < poll_attempts; ++i) {
+        int available = simulith_transport_available(port);
+        if (available > 0) {
+            result = simulith_transport_receive(port, data, numBytes);
+            if (result == (int)numBytes) {
+                got_resp = 1;
+                break;
+            }
         }
+        OS_TaskDelay(2);
     }
-
-    return status;
+    if (!got_resp) return SPI_ERROR;
+    return result;
 }
 
 int32_t spi_transaction(spi_info_t* device, uint8_t *txBuff, uint8_t * rxBuffer, uint32_t length, uint16_t delay, uint8_t bits, uint8_t deselect)
 {
-    int status = SPI_SUCCESS;
+    if (!device || device->isOpen != SPI_DEVICE_OPEN) return SPI_ERROR;
+    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
 
-    NE_SpiHandle *dev = nos_get_spi_device(device);
-    if(dev)
+    int32_t status = -1;
+    int sent = simulith_transport_send(port, txBuff, length);
+    if (sent == (int)length) 
     {
-        if(NE_spi_transaction(dev, txBuff, length, rxBuffer, length) != NE_SPI_SUCCESS)
+        int poll_attempts = 100;
+        int got_resp = 0;
+        int r = -1;
+        for (int i = 0; i < poll_attempts; ++i) 
         {
-            status = SPI_ERROR;
+            int available = simulith_transport_available(port);
+            if (available > 0) 
+            {
+                r = simulith_transport_receive(port, rxBuffer, length);
+                if (r == (int)length) 
+                {
+                    got_resp = 1;
+                    break;
+                }
+            }
+            OS_TaskDelay(2);
         }
+        if (got_resp) status = SIMULITH_TRANSPORT_SUCCESS;
     }
-
-    return status;
+    if (status != SIMULITH_TRANSPORT_SUCCESS) return SPI_ERROR;
+    return SPI_SUCCESS;
 }
 
 int32_t spi_close_device(spi_info_t* device)
 {
-	if (device->handle >= 0)
-    {
-        NE_SpiHandle *dev = nos_get_spi_device(device);
-        if(dev)
-        {
-            NE_spi_close(&dev);
-            spi_device[device->handle] = 0;
-            device-> isOpen = SPI_DEVICE_CLOSED;
-        }
+    if (!device) return SPI_ERROR;
+    
+    transport_port_t* port = get_simulith_device(device);
+    if (!port) return SPI_ERROR;
+    int result = simulith_transport_close(port);
+    if (result == SIMULITH_TRANSPORT_SUCCESS) {
+        device->isOpen = SPI_DEVICE_CLOSED;
+        return SPI_SUCCESS;
     }
-    return OS_SUCCESS;
+    return SPI_ERROR;
 }

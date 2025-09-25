@@ -1,4 +1,4 @@
-/* Copyright (C) 2009 - 2016 National Aeronautics and Space Administration. All Foreign Rights are Reserved to the U.S. Government.
+/* Copyright (C) 2009 - 2019 National Aeronautics and Space Administration. All Foreign Rights are Reserved to the U.S. Government.
 
 This software is provided "as is" without any warranty of any, kind either express, implied, or statutory, including, but not
 limited to, any warranty that the software will conform to, specifications any implied warranties of merchantability, fitness
@@ -15,71 +15,71 @@ NASA IV&V
 ivv-itc@lists.nasa.gov
 */
 
-#include "nos_link.h"
-#include <stdint.h>
-#include <stdlib.h>
-
-/* nos */
-#include <I2C/Client/CInterface.h>
-
-/* hwlib API */
+#include "simulith.h"
 #include "libi2c.h"
 
-/* i2c device handles */
-static NE_I2CHandle *i2c_device[NUM_I2C_DEVICES] = {0};
+/*
+ * Helper: Map an i2c_bus_info_t to a unique TCP port.
+ * Uses SIMULITH_I2C_BASE_PORT + (bus_id * 100) + device_addr
+ * Example: base_port = 52000, Bus 0 Device 10 -> 52010, Bus 1 Device 23 -> 52123
+ */
+#define HWLIB_I2C_MAX_DEVICES 256
 
-/* destroy nos engine i2c link */
-void nos_destroy_i2c_link(void)
+static void make_simulith_i2c_address(char* out, size_t outlen, int bus_id, int device_addr) 
 {
-    /* clean up i2c buses */
-    int32_t i;
-    for(i = 0; i < NUM_I2C_DEVICES; i++)
-    {
-        NE_I2CHandle *dev = i2c_device[i];
-        if(dev) NE_i2c_close(&dev);
-    }
-
+    int port = SIMULITH_I2C_BASE_PORT + (bus_id * 100) + device_addr;
+    snprintf(out, outlen, "ipc:///tmp/simulith_pub:%d", port);
+    OS_printf("HWLIB: make_simulith_i2c_address: Bus %d Device 0x%02X -> %s\n", bus_id, device_addr, out);
 }
 
-static NE_I2CHandle* nos_get_i2c_device(int handle)
-{
-    NE_I2CHandle *dev = NULL;
-    if(handle < NUM_I2C_DEVICES)
-    {
-        dev = i2c_device[handle];
-    }
-    return dev;
-}
+/*
+ * Simulith I2C device storage: indexed by a hash of bus_id and device address
+ */
+static transport_port_t *simulith_i2c_devices[HWLIB_I2C_MAX_DEVICES] = {0};
 
 int32_t i2c_master_init(i2c_bus_info_t* device)
 {
     int32_t status = I2C_SUCCESS;
-    if(device->handle >= 0 && device->handle < NUM_I2C_DEVICES)
-    {
-        /* get i2c device handle */
-        NE_I2CHandle **dev = &i2c_device[device->handle];
-        if(*dev == NULL)
-        {
-            /* get nos i2c connection params */
-            const nos_connection_t *con = &nos_i2c_connection[device->handle];
 
-            /* try to initialize master */
-            *dev = NE_i2c_init_master3(hub, 10, con->uri, con->bus); // the value 10 is used in the NOS3 case to indicate the master
-            if(*dev == NULL)
-            {
-                OS_printf("nos i2c_init_master failed\n");
-                device->isOpen = I2C_CLOSED;
-                status = I2C_ERROR;
-            }
-            else
-            {
-                device->isOpen = I2C_OPEN;
-            }
+    if (!device) 
+    {
+        OS_printf("HWLIB: i2c_master_init: device is NULL\n");
+        return I2C_ERROR;
+    }
+
+    int idx = (int)(device->handle);
+    int bus_id = (int)(device->handle); /* keep original semantics: handle encodes bus */
+    int device_addr = (int)(device->addr);
+
+    if (idx < 0 || idx >= HWLIB_I2C_MAX_DEVICES) {
+        OS_printf("HWLIB: i2c_master_init: invalid handle/index %d\n", idx);
+        return I2C_ERROR;
+    }
+
+    if (!simulith_i2c_devices[idx]) {
+        transport_port_t *i2c_dev = (transport_port_t *)calloc(1, sizeof(transport_port_t));
+        if (!i2c_dev) {
+            OS_printf("HWLIB: i2c_master_init: failed to allocate transport_port_t\n");
+            return I2C_ERROR;
         }
+        /* Set logical name for logging */
+        snprintf(i2c_dev->name, sizeof(i2c_dev->name), "I2C%d_0x%02X", bus_id, device_addr);
+        make_simulith_i2c_address(i2c_dev->address, sizeof(i2c_dev->address), bus_id, device_addr);
+        i2c_dev->is_server = 0; // Always connect, never bind
+        OS_printf("HWLIB: i2c_master_init: created transport port '%s' -> %s (handle %d, bus %d, addr 0x%02X)\n",
+                  i2c_dev->name, i2c_dev->address, idx, bus_id, device_addr);
+        simulith_i2c_devices[idx] = i2c_dev;
+    }
+
+    transport_port_t *i2c_dev = simulith_i2c_devices[idx];
+    status = simulith_transport_init((transport_port_t*)i2c_dev);
+    if(status == SIMULITH_TRANSPORT_SUCCESS)
+    {
+        device->isOpen = I2C_OPEN;
     }
     else
     {
-        OS_printf("i2c_init_master: Handle not found\n");
+        OS_printf("HWLIB: simulith_i2c_init failed with status %d\n", status);
         device->isOpen = I2C_CLOSED;
         status = I2C_ERROR;
     }
@@ -90,60 +90,151 @@ int32_t i2c_master_init(i2c_bus_info_t* device)
 int32_t i2c_master_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbuf, uint8_t txlen,
                                void * rxbuf, uint8_t rxlen, uint16_t timeout)
 {
-    int32_t result = I2C_ERROR;
+    if (!device) return I2C_ERROR;
+    
+    int bus_id = (int)(device->handle);
+    int device_addr = (int)(device->addr);
+    int idx = (int)(device->handle);
 
-    NE_I2CHandle *dev = nos_get_i2c_device((int)device->handle);
-
-    /* i2c transaction */
-    if(dev)
-    {
-        if ((txlen == 0) && (rxlen == 0)) { // force success if both buffer lengths are 0
-            result = I2C_SUCCESS;
-        } else if(NE_i2c_transaction(dev, addr, txbuf, txlen, rxbuf, rxlen) == NE_I2C_SUCCESS)
-        {
-            result = I2C_SUCCESS;
+    if (idx < 0 || idx >= HWLIB_I2C_MAX_DEVICES) {
+        OS_printf("HWLIB: i2c_master_transaction: invalid handle/index %d\n", idx);
+        return I2C_ERROR;
+    }
+    if (!simulith_i2c_devices[idx]) {
+        OS_printf("HWLIB: i2c_master_transaction: transport port not initialized for handle %d (bus %d addr 0x%02X)\n", idx, bus_id, device_addr);
+        return I2C_ERROR;
+    }
+    transport_port_t *i2c_dev = simulith_i2c_devices[idx];
+    int32_t status = -1;
+    int sent = simulith_transport_send((transport_port_t*)i2c_dev, (const uint8_t*)txbuf, txlen);
+    OS_printf("HWLIB: i2c_master_transaction: send returned %d (expected %u)\n", sent, txlen);
+    if (sent > 0) {
+        /* hex dump first up to 64 bytes of tx */
+        int dump = (sent < 64) ? sent : 64;
+        OS_printf("HWLIB: i2c_master_transaction: TX[%d] first %d bytes:", sent, dump);
+        for (int i = 0; i < dump; ++i) OS_printf(" %02X", ((uint8_t*)txbuf)[i]);
+        OS_printf("\n");
+    }
+    if (sent == (int)txlen) {
+        /* poll for response up to 20 times with short delay */
+        int poll_attempts = 20;
+        int r = 0;
+        for (int i = 0; i < poll_attempts; ++i) {
+            int available = simulith_transport_available((transport_port_t*)i2c_dev);
+            if (available > 0) {
+                r = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
+                break;
+            }
+            OS_TaskDelay(2);
+        }
+        if (r == (int)rxlen) status = SIMULITH_TRANSPORT_SUCCESS;
+        else {
+            OS_printf("HWLIB: i2c_master_transaction: no response after %d polls\n", poll_attempts);
         }
     }
+    if(status != SIMULITH_TRANSPORT_SUCCESS)
+    {
+        OS_printf("HWLIB: simulith_i2c_transaction failed with status %d\n", status);
+        return I2C_ERROR;
+    }
+    return I2C_SUCCESS;
+}
 
-    return result;
+int32_t i2c_read_transaction(i2c_bus_info_t* device, uint8_t addr, void * rxbuf, uint8_t rxlen, uint8_t timeout)
+{
+    if (!device) return I2C_ERROR;
+    int bus_id = (int)(device->handle);
+    int device_addr = (int)(device->addr);
+    int idx = (int)(device->handle);
+
+    if (idx < 0 || idx >= HWLIB_I2C_MAX_DEVICES) {
+        OS_printf("HWLIB: i2c_read_transaction: invalid handle/index %d\n", idx);
+        return I2C_ERROR;
+    }
+    if (!simulith_i2c_devices[idx]) {
+        OS_printf("HWLIB: i2c_read_transaction: transport port not initialized for handle %d (bus %d addr 0x%02X)\n", idx, bus_id, device_addr);
+        return I2C_ERROR;
+    }
+
+    transport_port_t *i2c_dev = simulith_i2c_devices[idx];
+    int32_t status = 0;
+    int poll_attempts = 20;
+    for (int i = 0; i < poll_attempts; ++i) {
+        int available = simulith_transport_available((transport_port_t*)i2c_dev);
+        if (available > 0) {
+            status = simulith_transport_receive((transport_port_t*)i2c_dev, (uint8_t*)rxbuf, rxlen);
+            break;
+        }
+        OS_TaskDelay(2);
+    }
+    if (status <= 0) {
+        OS_printf("HWLIB: i2c_read_transaction: no response after %d polls\n", poll_attempts);
+        return I2C_ERROR;
+    }
+    return I2C_SUCCESS;
+}
+
+int32_t i2c_write_transaction(i2c_bus_info_t* device, uint8_t addr, void * txbuf, uint8_t txlen, uint8_t timeout)
+{
+    if (!device) return I2C_ERROR;
+    int bus_id = (int)(device->handle);
+    int device_addr = (int)(device->addr);
+    int idx = (int)(device->handle);
+
+    if (idx < 0 || idx >= HWLIB_I2C_MAX_DEVICES) {
+        OS_printf("HWLIB: i2c_write_transaction: invalid handle/index %d\n", idx);
+        return I2C_ERROR;
+    }
+    if (!simulith_i2c_devices[idx]) {
+        OS_printf("HWLIB: i2c_write_transaction: transport port not initialized for handle %d (bus %d addr 0x%02X)\n", idx, bus_id, device_addr);
+        return I2C_ERROR;
+    }
+
+    transport_port_t *i2c_dev = simulith_i2c_devices[idx];
+    int32_t status = simulith_transport_send((transport_port_t*)i2c_dev, (const uint8_t*)txbuf, txlen);
+    if(status < 0)
+    {
+        OS_printf("HWLIB: simulith_i2c_write failed with status %d\n", status);
+        return I2C_ERROR;
+    }
+    return I2C_SUCCESS;
 }
 
 int32_t i2c_multiple_transaction(i2c_bus_info_t* device, uint8_t addr, struct i2c_rdwr_ioctl_data* rdwr_data, uint16_t timeout)
 {
-    int32_t result = I2C_ERROR;
-    uint32_t i;
-
-    for (i = 0; i < rdwr_data->nmsgs; i++)
-    {
-        if (rdwr_data->msgs[i].flags == 0)
-        {   // Write
-            result = i2c_master_transaction(device, addr, (void*) rdwr_data->msgs[i].buf, (uint8_t) rdwr_data->msgs[i].len, (void*) NULL, 0, timeout);
-        }
-        else
-        {   // Read
-            result = i2c_master_transaction(device, addr, (void*) NULL, 0, (void*) rdwr_data->msgs[i].buf, (uint8_t) rdwr_data->msgs[i].len, timeout);
-        }
-        
-        if (result != I2C_SUCCESS)
-        {
-            break;
-        }
-    }
-
-    return result;
+    // For now, return error as this is more complex to implement with the current architecture
+    OS_printf("HWLIB: i2c_multiple_transaction: not implemented in simulith mode\n");
+    return I2C_ERROR;
 }
 
 int32_t i2c_master_close(i2c_bus_info_t* device) 
 {
-    if (device->handle >= 0)
-    {
-        NE_I2CHandle *dev = nos_get_i2c_device((int)device->handle);
-        if(dev)
-        {
-            NE_i2c_close(&dev);
-            i2c_device[device->handle] = 0;
-            device->isOpen = I2C_CLOSED;
-        }
+    if (!device) return I2C_ERROR;
+    
+    int bus_id = (int)(device->handle);
+    int device_addr = (int)(device->addr);
+    int idx = (int)(device->handle);
+
+    if (idx < 0 || idx >= HWLIB_I2C_MAX_DEVICES) {
+        OS_printf("HWLIB: i2c_master_close: invalid handle/index %d\n", idx);
+        return I2C_ERROR;
     }
-    return I2C_SUCCESS;
+    if (!simulith_i2c_devices[idx]) {
+        OS_printf("HWLIB: i2c_master_close: transport port not initialized for handle %d (bus %d addr 0x%02X)\n", idx, bus_id, device_addr);
+        return I2C_ERROR;
+    }
+
+    transport_port_t *i2c_dev = simulith_i2c_devices[idx];
+    int32_t status = simulith_transport_close((transport_port_t*)i2c_dev);
+    
+    if(status < 0)
+    {
+        OS_printf("HWLIB: simulith_i2c_close failed with status %d\n", status);
+    }
+    
+    free(simulith_i2c_devices[idx]);
+    simulith_i2c_devices[idx] = NULL;
+    device->isOpen = I2C_CLOSED;
+    
+    return (status == SIMULITH_TRANSPORT_SUCCESS) ? I2C_SUCCESS : I2C_ERROR;
 }
